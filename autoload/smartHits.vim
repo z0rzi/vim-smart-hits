@@ -1,12 +1,50 @@
 
 function! smartHits#smartHits()
-    for elem in g:pairs
+    for elem in g:smartHits_pairs
         call smartHits#addAutoClose(elem[0], elem[1])
     endfor
 endfunction
 
 function s:makeRegexSafe(str)
     return escape(a:str, "\\/^$*.][~")
+endfunction
+
+function! s:getAbbrevs(ft, queue)
+    if len(a:ft)
+        let ft = a:ft
+    else
+        let ft = &ft
+    endif
+
+    if ! exists("g:smartHits_abbrevs['".ft."']")
+        return {}
+    endif
+
+    if exists("g:smartHits_cache_abbrevs['".ft."']")
+        return g:smartHits_cache_abbrevs[ft]
+    endif
+
+    let g:smartHits_cache_abbrevs = {}
+
+    let tmp = {}
+    for lhs in keys(g:smartHits_abbrevs[ft])
+        let rhs = g:smartHits_abbrevs[ft][lhs]
+
+        if len(matchstr(lhs, '^@'))
+            if index(a:queue, rhs) < 0
+                call add(a:queue, ft)
+                let other = s:getAbbrevs(rhs, a:queue)
+                for _lhs in keys(other)
+                    let tmp[_lhs] = other[_lhs]
+                endfor
+            endif
+        else
+            let tmp[lhs] = rhs
+        endif
+    endfor
+
+    let g:smartHits_cache_abbrevs[ft] = tmp
+    return tmp
 endfunction
 
 function! smartHits#addAutoClose(start, end)
@@ -22,7 +60,6 @@ function! smartHits#addAutoClose(start, end)
     if len(a:end) == 1 && a:start != a:end
         exe 'inoremap <silent> '.a:end.' <C-r>=smartHits#autoClose("'.start.'", "'.end.'", "'.end.'", 0)<CR>'
     endif
-
 endfunction
 
 function! smartHits#autoClose(start, end, typed, flag)
@@ -51,6 +88,11 @@ function! smartHits#autoClose(start, end, typed, flag)
         if len(found) == 0 || found[1]!=a:end | return a:typed | endif
         return "\<RIGHT>"
     elseif a:flag == -1
+        if a:start == "'"
+            if search('\w\%#', 'n')
+                return a:typed
+            endif
+        endif
         let found = s:cursorIsBetweenMatch()
         if len(found) == 0 || found[1]!=a:end
             return a:start . a:end . repeat("\<LEFT>", len(a:end))
@@ -81,7 +123,7 @@ function! smartHits#autoCloseLong(start, end)
 endfunction
 
 function! s:cursorIsBetweenMatch()
-    for [beg, end] in g:pairs
+    for [beg, end] in g:smartHits_pairs
         if search( s:makeRegexSafe(beg) . '\%#' . s:makeRegexSafe(end), 'n')
             return [beg, end]
         endif
@@ -105,11 +147,28 @@ function! smartHits#smartSpace()
     if len(s:cursorIsBetweenMatch())
         return "\<SPACE>\<SPACE>\<LEFT>"
     endif
+
+    let abbrevs = s:getAbbrevs('', [])
+    for lhs in keys(abbrevs)
+        let [line, col] = searchpos('\<'.lhs.'\>\%#', 'n')
+        if line
+            let rhs = abbrevs[lhs]
+            exe 's/\<'.lhs.'\>\%#\s*//g'
+            call cursor(0, col)
+
+            if len(matchstr(rhs, '!$'))
+                return rhs[:-2]
+            else
+                return rhs . "\<SPACE>"
+            endif
+        endif
+    endfor
+
     return "\<SPACE>"
 endfunction
 
 function! smartHits#smartBS()
-    for [start, end] in g:pairs
+    for [start, end] in g:smartHits_pairs
         let [line, col] = searchpos(s:makeRegexSafe(start).'\s*\(\n\|\s\)\s*\%#\s*\n\?\s*'.s:makeRegexSafe(end), 'n')
         if line
             let offset = col + len(start)
@@ -133,7 +192,6 @@ function! smartHits#skip()
     norm!"ax
     let cara = @a
     let next = getline('.')[col('.')-1]
-    echo next
     if index(['(', '[', '{'], next) != -1
         let line = line('.')
         norm!%
@@ -143,10 +201,14 @@ function! smartHits#skip()
         endif
         norm!%
     endif
-    if next == ' '
-        norm!"ap
-    else
+    if len(matchstr(next, '[a-zA-Z]'))
         norm!e"ap
+    else
+        if col('.') == col('$')-1
+            norm!j^"aP^
+        else
+            norm!"ap
+        endif
     endif
     return ''
 endfunction

@@ -1,15 +1,4 @@
 
-let g:pairs = [
-    \ ['(', ')'],
-    \ ['[', ']'],
-    \ ['{', '}'],
-    \ ['<', '>'],
-    \ ['/**', '*/'],
-    \ ['''', ''''],
-    \ ['"', '"'],
-    \ ['```', '```'],
-    \ ]
-
 call smartHits#smartHits()
 
 inoremap <silent> <CR> <C-r>=smartHits#smartCR()<CR>
