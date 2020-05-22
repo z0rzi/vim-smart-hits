@@ -150,10 +150,10 @@ function! smartHits#smartSpace()
 
     let abbrevs = s:getAbbrevs('', [])
     for lhs in keys(abbrevs)
-        let [line, col] = searchpos('\<'.lhs.'\>\%#', 'n')
+        let [line, col] = searchpos('\<'.lhs.'\%#', 'n')
         if line
             let rhs = abbrevs[lhs]
-            exe 's/\<'.lhs.'\>\%#\s*//g'
+            exe 's/\<'.lhs.'\%#\s*//g'
             call cursor(0, col)
 
             if len(matchstr(rhs, '!$'))
