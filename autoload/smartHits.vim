@@ -1,4 +1,12 @@
 
+if v:version > 704 || v:version == 704 && has("patch849")
+    let s:Right = "\<C-G>U\<RIGHT>"
+    let s:Left = "\<C-G>U\<LEFT>"
+else
+    let s:Right = "\<RIGHT>"
+    let s:Left = "\<LEFT>"
+endif
+
 function! smartHits#smartHits()
     for elem in g:smartHits_pairs
         call smartHits#addAutoClose(elem[0], elem[1])
@@ -57,7 +65,6 @@ function! smartHits#addAutoClose(start, end)
     if a:start == a:end && len(a:start) == 1 | let flag = -1
     else | let flag = 1 | endif
     exe 'inoremap <silent> '.a:start[-1:].' <C-r>=smartHits#autoClose("'.start.'", "'.end.'", "'.escape(start[-1:], '"').'", '.flag.')<CR>'
-    " exe 'inoremap <silent> '.a:start[-1:].' <C-r>=smartHits#autoCloseLong("' . a:start . '","' . a:end . '")<CR>'
 
     if len(a:end) == 1 && a:start != a:end
         exe 'inoremap <silent> '.a:end.' <C-r>=smartHits#autoClose("'.start.'", "'.end.'", "'.end.'", 0)<CR>'
@@ -80,7 +87,7 @@ function! smartHits#autoClose(start, end, typed, flag)
             " if search('\(' . s:makeRegexSafe(a:start) . '\)\@<!\%#' . s:makeRegexSafe(a:end), 'n')
             "     return a:typed
             " endif
-            return a:start.a:end."\<LEFT>"
+            return a:start.a:end.s:Left
         else
             return smartHits#autoCloseLong(a:start, a:end)
         endif
@@ -88,7 +95,7 @@ function! smartHits#autoClose(start, end, typed, flag)
         " closing
         let found = s:cursorIsBetweenMatch()
         if len(found) == 0 || found[1]!=a:end | return a:typed | endif
-        return "\<RIGHT>"
+        return s:Right
     elseif a:flag == -1
         if a:start == "'"
             if search('\w\%#', 'n')
@@ -97,9 +104,9 @@ function! smartHits#autoClose(start, end, typed, flag)
         endif
         let found = s:cursorIsBetweenMatch()
         if len(found) == 0 || found[1]!=a:end
-            return a:start . a:end . repeat("\<LEFT>", len(a:end))
+            return a:start . a:end . repeat(s:Left, len(a:end))
         endif
-        return "\<RIGHT>"
+        return s:Right
     else
         return a:typed
     endif
@@ -111,7 +118,7 @@ function! smartHits#skipClose(end)
 
     let [foundStart, foundEnd] = found
     if foundEnd == a:end
-        return "\<RIGHT>" 
+        return s:Right
     endif
     return a:end 
 endfunction
@@ -119,7 +126,7 @@ endfunction
 
 function! smartHits#autoCloseLong(start, end)
     if search( s:makeRegexSafe(a:start[:-2]) . '\%#\(\s*' . s:makeRegexSafe(a:end) . '\)\@!', 'n')
-        return a:start[-1:] . a:end . repeat("\<LEFT>", len(a:end))
+        return a:start[-1:] . a:end . repeat(s:Left, len(a:end))
     endif
     return a:start[-1:]
 endfunction
@@ -147,7 +154,7 @@ endfunction
 
 function! smartHits#smartSpace()
     if len(s:cursorIsBetweenMatch())
-        return "\<SPACE>\<SPACE>\<LEFT>"
+        return "\<SPACE>\<SPACE>" . s:Left
     endif
 
     let abbrevs = s:getAbbrevs('', [])
@@ -157,8 +164,6 @@ function! smartHits#smartSpace()
         if match(rx, '\$$')>=0 | let rx=rx[:len(rx)-2].'\%#\s*$' | else | let rx=rx.'\%#\s*' | endif
         if match(rx, '^\w')>=0 | let rx='\<'.rx | endif
         if match(rx, '\w$')>=0 | let rx=rx.'\>' | endif
-
-        echom 'rx: '.rx
 
         let [line, col, sub] = searchpos(rx, 'nbp')
         if line
@@ -192,7 +197,6 @@ function! smartHits#smartSpace()
                     endif
                     let [_match, _start, _end] = matchstrpos(sub_lhs, brace_rx, _end)
                 endwhile
-                echom 'sub_lhs: ' . sub_lhs
                 let [line, start] = searchpos(sub_lhs, 'nb')
                 let [line, end] = searchpos(sub_lhs, 'nbe')
                 if start > 0 | let start=start-1 | endif
