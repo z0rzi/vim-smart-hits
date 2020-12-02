@@ -20,30 +20,32 @@ function! s:getAbbrevs(ft, queue)
         return {}
     endif
 
-    if exists("g:smartHits_cache_abbrevs['".ft."']")
-        return g:smartHits_cache_abbrevs[ft]
+    if exists("s:smartHits_cache_abbrevs['".ft."']")
+        return s:smartHits_cache_abbrevs[ft]
     endif
 
-    let g:smartHits_cache_abbrevs = {}
+    let s:smartHits_cache_abbrevs = {}
 
     let tmp = {}
     for lhs in keys(g:smartHits_abbrevs[ft])
-        let rhs = g:smartHits_abbrevs[ft][lhs]
+        let rhss = g:smartHits_abbrevs[ft][lhs]
 
         if len(matchstr(lhs, '^@'))
-            if index(a:queue, rhs) < 0
-                call add(a:queue, ft)
-                let other = s:getAbbrevs(rhs, a:queue)
-                for _lhs in keys(other)
-                    let tmp[_lhs] = other[_lhs]
-                endfor
-            endif
+            for rhs in split(rhss)
+                if index(a:queue, rhs) < 0
+                    call add(a:queue, ft)
+                    let other = s:getAbbrevs(rhs, a:queue)
+                    for _lhs in keys(other)
+                        let tmp[_lhs] = other[_lhs]
+                    endfor
+                endif
+            endfor
         else
-            let tmp[lhs] = rhs
+            let tmp[lhs] = rhss
         endif
     endfor
 
-    let g:smartHits_cache_abbrevs[ft] = tmp
+    let s:smartHits_cache_abbrevs[ft] = tmp
     return tmp
 endfunction
 
@@ -150,10 +152,63 @@ function! smartHits#smartSpace()
 
     let abbrevs = s:getAbbrevs('', [])
     for lhs in keys(abbrevs)
-        let [line, col] = searchpos('\<'.lhs.'\%#', 'n')
+        let rx = lhs
+        if match(rx, '^\^')>=0 | let rx='\%(^\s*\)\@<='.rx[1:] | endif
+        if match(rx, '\$$')>=0 | let rx=rx[:len(rx)-2].'\%#\s*$' | else | let rx=rx.'\%#\s*' | endif
+        if match(rx, '^\w')>=0 | let rx='\<'.rx | endif
+        if match(rx, '\w$')>=0 | let rx=rx.'\>' | endif
+
+        echom 'rx: '.rx
+
+        let [line, col, sub] = searchpos(rx, 'nbp')
         if line
             let rhs = abbrevs[lhs]
-            exe 's/\<'.lhs.'\%#\s*//g'
+            if match(rhs, '\$1')>=0 && sub > 1
+                " let sub_lhs = substitute(rx, '\\(', '\\zs', 'g')
+                " let sub_lhs = substitute(sub_lhs, '\\)', '\\ze', 'g')
+                let sub_lhs = rx
+
+                let brace_rx = '\\%\?(\|\\)'
+                let [_match, _start, _end] = matchstrpos(sub_lhs, brace_rx)
+                let stack = []
+                while _end >= 0
+                    if _match == '\%('
+                        call add(stack, 0)
+                    elseif  _match == '\('
+                        call add(stack, 1)
+                        let sub_lhs = sub_lhs[0 : _start - 1] . '\zs' . sub_lhs[_end : -1]
+                    elseif  _match == '\)'
+                        if len(stack) == 0
+                            " incorrect regex....
+                            let sub_lhs = sub_lhs[0 : _start - 1] . sub_lhs[_end : -1]
+                        endif
+                        let flag = remove(stack, -1)
+                        if flag
+                            " capture group
+                            let sub_lhs = sub_lhs[0 : _start - 1] . '\ze' . sub_lhs[_end : -1]
+                        else
+                            " ignore
+                        endif
+                    endif
+                    let [_match, _start, _end] = matchstrpos(sub_lhs, brace_rx, _end)
+                endwhile
+                echom 'sub_lhs: ' . sub_lhs
+                let [line, start] = searchpos(sub_lhs, 'nb')
+                let [line, end] = searchpos(sub_lhs, 'nbe')
+                if start > 0 | let start=start-1 | endif
+                if end > 0 | let end=end-1 | endif
+                let match = trim(getline(line)[start : end])
+                let rhs = substitute(rhs, '$1', match, 'g')
+            endif
+            if match(rhs, '\$&')>=0
+                let [line, start] = searchpos(rx, 'nb')
+                let [line, end] = searchpos(rx, 'nbe')
+                if start > 0 | let start=start-1 | endif
+                if end > 0 | let end=end-1 | endif
+                let match = trim(getline(line)[start : end])
+                let rhs = substitute(rhs, '$&', match, 'g')
+            endif
+            exe 's/'.rx.'//g'
             call cursor(0, col)
 
             if len(matchstr(rhs, '!$'))
