@@ -168,50 +168,17 @@ function! smartHits#smartSpace()
         let [line, col, sub] = searchpos(rx, 'nbp')
         if line
             let rhs = abbrevs[lhs]
-            if match(rhs, '\$1')>=0 && sub > 1
-                " let sub_lhs = substitute(rx, '\\(', '\\zs', 'g')
-                " let sub_lhs = substitute(sub_lhs, '\\)', '\\ze', 'g')
-                let sub_lhs = rx
-
-                let brace_rx = '\\%\?(\|\\)'
-                let [_match, _start, _end] = matchstrpos(sub_lhs, brace_rx)
-                let stack = []
-                while _end >= 0
-                    if _match == '\%('
-                        call add(stack, 0)
-                    elseif  _match == '\('
-                        call add(stack, 1)
-                        let sub_lhs = sub_lhs[0 : _start - 1] . '\zs' . sub_lhs[_end : -1]
-                    elseif  _match == '\)'
-                        if len(stack) == 0
-                            " incorrect regex....
-                            let sub_lhs = sub_lhs[0 : _start - 1] . sub_lhs[_end : -1]
-                        endif
-                        let flag = remove(stack, -1)
-                        if flag
-                            " capture group
-                            let sub_lhs = sub_lhs[0 : _start - 1] . '\ze' . sub_lhs[_end : -1]
-                        else
-                            " ignore
-                        endif
-                    endif
-                    let [_match, _start, _end] = matchstrpos(sub_lhs, brace_rx, _end)
-                endwhile
-                let [line, start] = searchpos(sub_lhs, 'nb')
-                let [line, end] = searchpos(sub_lhs, 'nbe')
-                if start > 0 | let start=start-1 | endif
-                if end > 0 | let end=end-1 | endif
-                let match = trim(getline(line)[start : end])
-                let rhs = substitute(rhs, '$1', match, 'g')
-            endif
-            if match(rhs, '\$&')>=0
-                let [line, start] = searchpos(rx, 'nb')
-                let [line, end] = searchpos(rx, 'nbe')
-                if start > 0 | let start=start-1 | endif
-                if end > 0 | let end=end-1 | endif
-                let match = trim(getline(line)[start : end])
-                let rhs = substitute(rhs, '$&', match, 'g')
-            endif
+            let cnt = 10
+            let matched = getline(line)[col-1:col('.')-2]
+            while match(rhs, '\$\%(\d\+\|&\)') >= 0
+                if cnt < 0 | break | endif
+                let cnt -= 1
+                let num = matchstr(rhs, '\$\zs\%(\d\+\|&\)')
+                if num != '&' | let num = '\'.num | endif
+                let found = substitute(matched, lhs, num, '')
+                echom found
+                let rhs = substitute(rhs, '\$\%(\d\+\|&\)', found, '')
+            endwhile
             exe 's/'.rx.'//g'
             call cursor(0, col)
 
@@ -248,6 +215,11 @@ function! smartHits#smartBS()
 endfunction
 
 function! smartHits#skip()
+    if col('.') == col('$') - 1
+        let eol = 1
+    else
+        let eol = 0
+    endif
     norm!"ax
     let cara = @a
     let next = getline('.')[col('.')-1]
@@ -261,9 +233,9 @@ function! smartHits#skip()
         norm!%
     endif
     if len(matchstr(next, '[a-zA-Z]'))
-        norm!e"ap
+        norm!he"ap
     else
-        if col('.') == col('$')-1
+        if eol
             norm!j^"aP^
         else
             norm!"ap
