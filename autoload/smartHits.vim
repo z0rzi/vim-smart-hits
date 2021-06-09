@@ -132,6 +132,9 @@ function! smartHits#autoCloseLong(start, end)
 endfunction
 
 function! s:cursorIsBetweenMatch()
+    " Checks if the cursor is directly between a pair
+    " @return {[string, string]|[]} The start and end pattern if found, an
+    "                               empty array otherwise
     for [beg, end] in g:smartHits_pairs
         if search( s:makeRegexSafe(beg) . '\%#' . s:makeRegexSafe(end), 'n')
             return [beg, end]
@@ -176,7 +179,6 @@ function! smartHits#smartSpace()
                 let num = matchstr(rhs, '\$\zs\%(\d\+\|&\)')
                 if num != '&' | let num = '\'.num | endif
                 let found = substitute(matched, lhs, num, '')
-                echom found
                 let rhs = substitute(rhs, '\$\%(\d\+\|&\)', found, '')
             endwhile
             exe 's/'.rx.'//g'
@@ -194,6 +196,7 @@ function! smartHits#smartSpace()
 endfunction
 
 function! smartHits#smartBS()
+    " Checking if the cursor is between 2 pairs
     for [start, end] in g:smartHits_pairs
         let [line, col] = searchpos(s:makeRegexSafe(start).'\s*\(\n\|\s\)\s*\%#\s*\n\?\s*'.s:makeRegexSafe(end), 'n')
         if line
@@ -205,13 +208,19 @@ function! smartHits#smartBS()
     endfor
 
     let match = s:cursorIsBetweenMatch()
-    if len(match) == 0  | return "\<BS>" | endif
+    if len(match) > 0
+        let [beg, end] = match  
 
-    let [beg, end] = match  
+        if len(beg) > 1 | return "\<BS>" | endif
 
-    if len(beg) > 1 | return "\<BS>" | endif
+        return "\<BS>" . repeat("\<DEL>", len(end))
+    endif
 
-    return "\<BS>" . repeat("\<DEL>", len(end))
+    if search('^\s\+\%#', 'n')
+        return "\<C-u>\<BS>"
+    endif
+
+    return "\<BS>"
 endfunction
 
 function! smartHits#skip()
