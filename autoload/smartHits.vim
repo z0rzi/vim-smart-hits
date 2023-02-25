@@ -1,5 +1,6 @@
 
 if v:version > 704 || v:version == 704 && has("patch849")
+    " This allows us to repeat movement sequences using the '.' key
     let s:Right = "\<C-G>U\<RIGHT>"
     let s:Left = "\<C-G>U\<LEFT>"
 else
@@ -7,6 +8,7 @@ else
     let s:Left = "\<LEFT>"
 endif
 
+" Setting up the auto-closing of pairs
 function! smartHits#smartHits()
     for elem in g:smartHits_pairs
         call smartHits#addAutoClose(elem[0], elem[1])
@@ -17,7 +19,65 @@ function s:makeRegexSafe(str)
     return escape(a:str, "\\/^$*.][~")
 endfunction
 
-function! s:getAbbrevs(ft, queue)
+" Counts the occurences of the character on this line before and after the
+" cursor. Doesn't count escaped characters
+function s:countCharsOnLine(char, line_num, cursor_col)
+    if a:line_num == 0 | let line_num = line('.') | else | let line_num = a:line_num | endif
+    if a:cursor_col == 0 | let cursor_col = col('.') | else | let a:cursor_col = a:cursor_col | endif
+
+    let cursor_col = cursor_col - 1
+
+    let line = getline(line_num)
+
+    let count_before = 0
+    let count_after = 0
+
+    let idx = 0
+
+    let prev_was_escape = 0
+    while idx < len(line)
+        if !prev_was_escape && line[idx] == a:char
+            if idx < cursor_col
+                let count_before = count_before + 1
+            else
+                let count_after = count_after + 1
+            endif
+        endif
+        let prev_was_escape = line[idx] == '\'
+        let idx = idx + 1
+    endwhile
+
+    return [count_before, count_after]
+endfunction
+
+" Gives the abbreviations for the given filetype.
+"
+" Abbrevations are kind of like iab from native vim, but better.
+" Are triggered when space is pressed after a given regex
+"
+" here are a few examples:
+"
+" let g:smartHits_abbrevs = {
+"     \   'vim': {
+"     \     'log': "echom",
+"     \   },
+"     \   'sh': {
+"     \     'log': "echo $!",
+"     \   },
+"     \   'javascript': {
+"     \     '^l': "let",
+"     \     '^c': "const",
+"     \   },
+"     \   'typescript': {
+"     \     '@inherit': 'javascript',
+"     \     'ro': "readonly",
+"     \ }
+"     \}
+"
+" ^ at the start of lhs to only work if the match is at the start of the line
+" $ at the end of lhs to only work if match is at the end of the line
+" \(...\) in lhs, and $1 in rhs to repeat capture or '$&' to repeat full match
+function! s:getAbbrevs(ft, already_inherited)
     if len(a:ft)
         let ft = a:ft
     else
@@ -36,20 +96,30 @@ function! s:getAbbrevs(ft, queue)
 
     let tmp = {}
     for lhs in keys(g:smartHits_abbrevs[ft])
-        let rhss = g:smartHits_abbrevs[ft][lhs]
+        let rhs = g:smartHits_abbrevs[ft][lhs]
 
         if len(matchstr(lhs, '^@'))
-            for rhs in split(rhss)
-                if index(a:queue, rhs) < 0
-                    call add(a:queue, ft)
-                    let other = s:getAbbrevs(rhs, a:queue)
+            " Inheritance
+            for inherit_lang in split(rhs)
+                " For all the inherited languages
+                if index(a:already_inherited, inherit_lang) < 0
+                    " if language is not already inherited
+                    " (to avoid infinite loops)
+
+                    call add(a:already_inherited, ft)
+
+                    " Getting abbreviations of the other language
+                    let other = s:getAbbrevs(inherit_lang, a:already_inherited)
+
+                    " Assigning the abbrevations to this language as well
                     for _lhs in keys(other)
                         let tmp[_lhs] = other[_lhs]
                     endfor
                 endif
             endfor
         else
-            let tmp[lhs] = rhss
+            " Not inheritance, normal case
+            let tmp[lhs] = rhs
         endif
     endfor
 
@@ -57,84 +127,104 @@ function! s:getAbbrevs(ft, queue)
     return tmp
 endfunction
 
+" Setting up the mappings for the automatic closing of pairs
 function! smartHits#addAutoClose(start, end)
-
     let start = escape(a:start, '"')
     let end = escape(a:end, '"')
 
-    if a:start == a:end && len(a:start) == 1 | let flag = -1
-    else | let flag = 1 | endif
-    exe 'inoremap <silent> '.a:start[-1:].' <C-r>=smartHits#autoClose("'.start.'", "'.end.'", "'.escape(start[-1:], '"').'", '.flag.')<CR>'
+    if a:start == a:end && len(a:start) == 1
+        exe 'inoremap <silent> '.a:start[-1:].' <C-r>=smartHits#onSamePair("'.start.'")'.'")<CR>'
+    else
+        exe 'inoremap <silent> '.a:start[-1:].' <C-r>=smartHits#onOpenPair("'.start.'", "'.end.'", "'.escape(start[-1:], '"').'")<CR>'
+    endif
 
     if len(a:end) == 1 && a:start != a:end
-        exe 'inoremap <silent> '.a:end.' <C-r>=smartHits#autoClose("'.start.'", "'.end.'", "'.end.'", 0)<CR>'
+        " Mapping for the closing character, if it's only one char
+        exe 'inoremap <silent> ' . a:end . ' <C-r>=smartHits#onClosePair("'.start.'", "'.end.'", "'.end.'")<CR>'
     endif
 endfunction
 
-function! smartHits#autoClose(start, end, typed, flag)
-    if a:flag == 1
-        " opening
-        if len(a:start) == 1
-            let synStack = synstack(line('.'), col('.'))
-            for syn in synStack
-                if synIDattr(synIDtrans(syn), "name") == 'String'
-                    return a:typed
-                endif
-            endfor
-            " if search('\%#' . s:makeRegexSafe(a:start), 'n')
-            "     return a:typed
-            " endif
-            " if search('\(' . s:makeRegexSafe(a:start) . '\)\@<!\%#' . s:makeRegexSafe(a:end), 'n')
-            "     return a:typed
-            " endif
-            return a:start.a:end.s:Left
-        else
-            return smartHits#autoCloseLong(a:start, a:end)
+" Called when the a pair with the same open and closing is triggered.
+"
+" We have to guess whether the pair is being open or closed
+"
+" @param char The char representing the pair
+function! smartHits#onSamePair(char)
+    if a:char == "'"
+        if search('\w\%#', 'n')
+            " It's an apostrophe right after a word, we're most likely writing
+            " human language, we don't want to close the pair.
+            return a:char
         endif
-    elseif a:flag == 0
-        " closing
-        let found = s:cursorIsBetweenMatch()
-        if len(found) == 0 || found[1]!=a:end | return a:typed | endif
-        return s:Right
-    elseif a:flag == -1
-        if a:start == "'"
-            if search('\w\%#', 'n')
+    endif
+
+    let [before, after] = s:countCharsOnLine(a:char, 0, 0)
+    let is_odd = (before + after) % 2
+    if is_odd
+        " We want to make it even, we add one char
+        return a:char
+    endif
+
+    let found = s:cursorIsBetweenMatch()
+    if len(found) == 0 || found[1]!=a:char
+        return a:char . a:char . repeat(s:Left, len(a:char))
+    endif
+
+    return s:Right
+endfunction
+
+" Called when the a lhs of a pair is typed
+"
+" @param lhs The start of the pair
+" @param rhs The end of the pair
+" @param typed What was typed to trigger this function
+function! smartHits#onOpenPair(lhs, rhs, typed)
+    if len(a:lhs) == 1
+        let synStack = synstack(line('.'), col('.'))
+        for syn in synStack
+            if synIDattr(synIDtrans(syn), "name") == 'String'
                 return a:typed
             endif
-        endif
-        let found = s:cursorIsBetweenMatch()
-        if len(found) == 0 || found[1]!=a:end
-            return a:start . a:end . repeat(s:Left, len(a:end))
-        endif
-        return s:Right
+        endfor
+        " if search('\%#' . s:makeRegexSafe(a:lhs), 'n')
+        "     return a:typed
+        " endif
+        " if search('\(' . s:makeRegexSafe(a:lhs) . '\)\@<!\%#' . s:makeRegexSafe(a:rhs), 'n')
+        "     return a:typed
+        " endif
+        return a:lhs.a:rhs.s:Left
     else
-        return a:typed
+        return smartHits#autoCloseLong(a:lhs, a:rhs)
     endif
+    return a:typed
 endfunction
 
-function! smartHits#skipClose(end)
-    let found = s:cursorIsBetweenMatch()
-    if len(found) == 0 | return a:end | endif
-
-    let [foundStart, foundEnd] = found
-    if foundEnd == a:end
-        return s:Right
-    endif
-    return a:end 
-endfunction
-
-
+" Handles the closing of pairs when the ending is longer than 1 character
 function! smartHits#autoCloseLong(start, end)
     if search( s:makeRegexSafe(a:start[:-2]) . '\%#\(\s*' . s:makeRegexSafe(a:end) . '\)\@!', 'n')
+        " If the cursor is not already followed by the ending, we add the
+        " ending, and reposition the cursor
         return a:start[-1:] . a:end . repeat(s:Left, len(a:end))
     endif
+    " Otherwise, we just enter the last character
     return a:start[-1:]
 endfunction
 
+" Called when the a rhs of a pair is typed
+"
+" @param lhs The start of the pair
+" @param rhs The end of the pair
+" @param typed What was typed to trigger this function
+function! smartHits#onClosePair(lhs, rhs, typed)
+    let found = s:cursorIsBetweenMatch()
+    if len(found) == 0 || found[1]!=a:rhs | return a:typed | endif
+    return s:Right
+endfunction
+
+" Checks if the cursor is directly between a pair
+" @return {[string, string]|[]} The start and end pattern if found, an
+"                               empty array otherwise
 function! s:cursorIsBetweenMatch()
-    " Checks if the cursor is directly between a pair
-    " @return {[string, string]|[]} The start and end pattern if found, an
-    "                               empty array otherwise
     for [beg, end] in g:smartHits_pairs
         if search( s:makeRegexSafe(beg) . '\%#' . s:makeRegexSafe(end), 'n')
             return [beg, end]
@@ -143,6 +233,15 @@ function! s:cursorIsBetweenMatch()
     return []
 endfunction
 
+" Handles the return key (<CR>)
+"
+" Adds 2 returns if the cursor is between a pair
+"    eg:
+"       (|)
+"      becomes
+"       (
+"         |
+"       )
 function! smartHits#smartCR()
     let pair = s:cursorIsBetweenMatch()
     if len(pair)
@@ -155,6 +254,12 @@ function! smartHits#smartCR()
     return "\<CR>"
 endfunction
 
+" Handles the space key.
+"
+" Adds 2 spaces if the cursor is between a pair.
+"   (|) => ( | )
+"
+" Handles the expansion of abbreviations.
 function! smartHits#smartSpace()
     if len(s:cursorIsBetweenMatch())
         return "\<SPACE>\<SPACE>" . s:Left
@@ -195,34 +300,71 @@ function! smartHits#smartSpace()
     return "\<SPACE>"
 endfunction
 
+" Handles the backspace key.
+"
+" Removes pairs with one backspace if cursor is between them.
+"
+" Removes the whole line with indent if cursor is in the middle of nowhere
 function! smartHits#smartBS()
-    " Checking if the cursor is between 2 pairs
     for [start, end] in g:smartHits_pairs
-        let [line, col] = searchpos(s:makeRegexSafe(start).'\s*\(\n\|\s\)\s*\%#\s*\n\?\s*'.s:makeRegexSafe(end), 'n')
+        " Checking if the cursor is between 2 pairs, with white characters in between
+
+        let rx = s:makeRegexSafe(start).'\s*\(\n\|\s\)\s*\%#\s*\n\?\s*'.s:makeRegexSafe(end)
+        let [line, col] = searchpos(rx, 'n')
         if line
+            " The regex was found, the cursor is in between a pair, with
+            " white chars in between
             let offset = col + len(start)
-            exe '%s/'.s:makeRegexSafe(start).'\s*\(\n\|\s\)\s*\%#\s*\n\?\s*'.s:makeRegexSafe(end).'/'.s:makeRegexSafe(start).s:makeRegexSafe(end).'/'
+
+            " We remove the white chars
+            exe '%s/' . rx . '/' . s:makeRegexSafe(start) . s:makeRegexSafe(end) . '/'
+
+            " We reposition the cursor
             call cursor(0, offset)
+
             return ''
         endif
     endfor
 
     let match = s:cursorIsBetweenMatch()
     if len(match) > 0
-        let [beg, end] = match  
+        " The cursor is between 2 pairs
+        let [beg, end] = match
 
-        if len(beg) > 1 | return "\<BS>" | endif
+        if beg == end && len(beg) == 1
+            let [before, after] = s:countCharsOnLine(beg, 0, 0)
+            let is_odd = (before + after) % 2
+
+            if is_odd
+                " We try to make the number even
+                return "\<BS>"
+            endif
+        endif
+
+        if len(beg) > 1
+            " The start is long, we don't support these cases, because
+            " removing everything can seem counter-intuitive in some cases
+            return "\<BS>"
+
+            " To support it, replace the return by the following line:
+            " return repeat("\<BS>", len(beg)) . repeat("\<DEL>", len(end))
+        endif
 
         return "\<BS>" . repeat("\<DEL>", len(end))
     endif
 
+    " It seems to be just a normal backspace, no pairs invloved
+
     if search('^\s\+\%#', 'n')
-        return "\<C-u>\<BS>"
+        " If we're in the middle of nowhere with indent, we remove the indent
+        return "\<C-u>"
     endif
 
     return "\<BS>"
 endfunction
 
+" Pushes the character right after the cursor further on the line.
+" Especially useful to enclose existing code in brackets
 function! smartHits#skip()
     if col('.') == col('$') - 1
         let eol = 1
@@ -250,5 +392,28 @@ function! smartHits#skip()
             norm!"ap
         endif
     endif
+    return ''
+endfunction
+
+" Pushes the character before the cursor backwards.
+" Not really useful :D
+function! smartHits#unskip()
+    if !exists('b:__carcol') || b:__carcol < 0 || b:__curpos[0] != line('.') || b:__curpos[1] != col('.')
+        let b:__carcol = col('.')
+        norm! l
+    endif
+    let curpos = getcurpos()
+    let cara = getline('.')[b:__carcol-1]
+
+    let l = getline('.')
+    let l = l[:b:__carcol-2] . l[b:__carcol:]
+    let l = l[:b:__carcol-3] . cara . l[b:__carcol-2:]
+    call setline('.', l)
+
+    let b:__curpos = [line('.'), col('.')]
+    let b:__carcol = b:__carcol-1
+    if b:__carcol <= 2 | let b:__carcol = -1 | endif
+
+    call setpos('.', curpos)
     return ''
 endfunction
