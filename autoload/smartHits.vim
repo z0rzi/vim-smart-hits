@@ -19,6 +19,46 @@ function s:makeRegexSafe(str)
     return escape(a:str, "\\/^$*.][~")
 endfunction
 
+function s:onSyntax(syn_name)
+    let synStack = synstack(line('.'), col('.'))
+    for syn in synStack
+        if synIDattr(synIDtrans(syn), "name") == a:syn_name
+            return 1
+        endif
+    endfor
+    return 0
+endfunction
+
+function s:getMatchStack(lhs, rhs)
+    let currentline = getline('.')
+
+    let curpos = col('.')
+    let i = 0
+    let stackBefore = 0
+    let stackAfter = 0
+    while i < len(currentline)
+        let char = currentline[i]
+        let beforeCursor = i < curpos - 1
+
+        if char == a:lhs
+            if beforeCursor
+                let stackBefore += 1
+            else
+                let stackAfter += 1
+            endif
+        elseif char == a:rhs
+            if beforeCursor
+                let stackBefore -= 1
+            else
+                let stackAfter -= 1
+            endif
+        endif
+
+        let i += 1
+    endwhile
+    return [stackBefore, stackAfter]
+endfunction
+
 " Counts the occurences of the character on this line before and after the
 " cursor. Doesn't count escaped characters
 function s:countCharsOnLine(char, line_num, cursor_col)
@@ -180,19 +220,23 @@ endfunction
 " @param typed What was typed to trigger this function
 function! smartHits#onOpenPair(lhs, rhs, typed)
     if len(a:lhs) == 1
-        let synStack = synstack(line('.'), col('.'))
-        for syn in synStack
-            if synIDattr(synIDtrans(syn), "name") == 'String'
+        " if s:onSyntax('String') || s:onSyntax('Comment')
+        "     return a:typed
+        " endif
+
+        if len(a:lhs) == 1 && len(a:rhs) == 1
+            let [stackBefore, stackAfter] = s:getMatchStack(a:lhs, a:rhs)
+
+            if stackBefore < 0 | let stackBefore = 0 | endif
+
+            if -1 * stackAfter > stackBefore
                 return a:typed
+            else
+                return a:lhs . a:rhs . s:Left
             endif
-        endfor
-        " if search('\%#' . s:makeRegexSafe(a:lhs), 'n')
-        "     return a:typed
-        " endif
-        " if search('\(' . s:makeRegexSafe(a:lhs) . '\)\@<!\%#' . s:makeRegexSafe(a:rhs), 'n')
-        "     return a:typed
-        " endif
-        return a:lhs.a:rhs.s:Left
+        endif
+
+        return a:lhs . a:rhs . s:Left
     else
         return smartHits#autoCloseLong(a:lhs, a:rhs)
     endif
@@ -216,6 +260,20 @@ endfunction
 " @param rhs The end of the pair
 " @param typed What was typed to trigger this function
 function! smartHits#onClosePair(lhs, rhs, typed)
+    let nextchar =  getline('.')[col('.') - 1]
+
+    if nextchar == a:rhs
+        let [stackBefore, stackAfter] = s:getMatchStack(a:lhs, a:rhs)
+
+        if stackAfter > 0 | let stackAfter = 0 | endif
+
+        if stackAfter + stackBefore > 0
+            return a:typed
+        else
+            return s:Right
+        endif
+    endif
+
     let found = s:cursorIsBetweenMatch()
     if len(found) == 0 || found[1]!=a:rhs | return a:typed | endif
     return s:Right
@@ -259,7 +317,7 @@ endfunction
 " Adds 2 spaces if the cursor is between a pair.
 "   (|) => ( | )
 "
-" Handles the expansion of abbreviations.
+" Also handles the expansion of abbreviations.
 function! smartHits#smartSpace()
     if len(s:cursorIsBetweenMatch())
         return "\<SPACE>\<SPACE>" . s:Left
@@ -306,6 +364,10 @@ endfunction
 "
 " Removes the whole line with indent if cursor is in the middle of nowhere
 function! smartHits#smartBS()
+    if col('.') == 1
+        return "\<BS>"
+    endif
+
     for [start, end] in g:smartHits_pairs
         " Checking if the cursor is between 2 pairs, with white characters in between
 
@@ -339,7 +401,19 @@ function! smartHits#smartBS()
                 " We try to make the number even
                 return "\<BS>"
             endif
+
+        elseif len(end) == 1 && len(beg) == 1
+            let [stackBefore, stackAfter] = s:getMatchStack(beg, end)
+
+            if stackBefore < 0 | let stackBefore = 0 | endif
+
+            if stackAfter + stackBefore > 0
+                return "\<BS>"
+            else
+                return "\<BS>\<DEL>"
+            endif
         endif
+
 
         if len(beg) > 1
             " The start is long, we don't support these cases, because
