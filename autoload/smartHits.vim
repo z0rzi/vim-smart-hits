@@ -263,6 +263,8 @@ function! smartHits#onClosePair(lhs, rhs, typed)
     let nextchar =  getline('.')[col('.') - 1]
 
     if nextchar == a:rhs
+        " If the next char is the same as the closing char,
+        " we just move the cursor
         let [stackBefore, stackAfter] = s:getMatchStack(a:lhs, a:rhs)
 
         if stackAfter > 0 | let stackAfter = 0 | endif
@@ -270,7 +272,9 @@ function! smartHits#onClosePair(lhs, rhs, typed)
         if stackAfter + stackBefore > 0
             return a:typed
         else
-            return s:Right
+            " Using <del>typed instead of just <right> because there might be
+            " a mapping on the typed char, and we want to trigger it
+            return "\<DEL>" . a:typed
         endif
     endif
 
@@ -319,10 +323,6 @@ endfunction
 "
 " Also handles the expansion of abbreviations.
 function! smartHits#smartSpace()
-    if len(s:cursorIsBetweenMatch())
-        return "\<SPACE>\<SPACE>" . s:Left
-    endif
-
     let abbrevs = s:getAbbrevs('', [])
     for lhs in keys(abbrevs)
         let rx = lhs
@@ -354,6 +354,11 @@ function! smartHits#smartSpace()
             endif
         endif
     endfor
+
+    if len(s:cursorIsBetweenMatch())
+        return "\<SPACE>\<SPACE>" . s:Left
+    endif
+
 
     return "\<SPACE>"
 endfunction
@@ -435,6 +440,29 @@ function! smartHits#smartBS()
     endif
 
     return "\<BS>"
+endfunction
+
+" Pushes the character at the end of the line
+function! smartHits#sendToEol()
+    if col('.') == col('$') - 1
+        let eol = 1
+    else
+        let eol = 0
+    endif
+    norm!"ax
+    let cara = @a
+    let lineContent = getline('.')
+    let lastChar = lineContent[-1:]
+
+    if lastChar == ';'
+        let new_col = col('$') - 1
+    else
+        let new_col = col('$')
+    endif
+
+    call setpos('.', [0, line('.'), new_col, 0])
+
+    return cara
 endfunction
 
 " Pushes the character right after the cursor further on the line.
