@@ -138,6 +138,13 @@ function! s:getAbbrevs(ft, already_inherited)
     for lhs in keys(g:smartHits_abbrevs[ft])
         let rhs = g:smartHits_abbrevs[ft][lhs]
 
+        let rx = lhs
+        if match(rx, '^\^')>=0 | let rx='\%(^\s*\)\@<='.rx[1:] | endif
+        if match(rx, '\$$')>=0 | let rx=rx[:len(rx)-2].'\%#\s*$' | else | let rx=rx.'\%#\s*' | endif
+        if match(rx, '^\w')>=0 | let rx='\<'.rx | endif
+        if match(rx, '\w$')>=0 | let rx=rx.'\>' | endif
+        let lhs = rx
+
         if len(matchstr(lhs, '^@'))
             " Inheritance
             for inherit_lang in split(rhs)
@@ -326,10 +333,7 @@ function! smartHits#smartSpace()
     let abbrevs = s:getAbbrevs('', [])
     for lhs in keys(abbrevs)
         let rx = lhs
-        if match(rx, '^\^')>=0 | let rx='\%(^\s*\)\@<='.rx[1:] | endif
-        if match(rx, '\$$')>=0 | let rx=rx[:len(rx)-2].'\%#\s*$' | else | let rx=rx.'\%#\s*' | endif
-        if match(rx, '^\w')>=0 | let rx='\<'.rx | endif
-        if match(rx, '\w$')>=0 | let rx=rx.'\>' | endif
+        echom rx
 
         let [line, col, sub] = searchpos(rx, 'nbp')
         if line
