@@ -333,7 +333,6 @@ function! smartHits#smartSpace()
     let abbrevs = s:getAbbrevs('', [])
     for lhs in keys(abbrevs)
         let rx = lhs
-        echom rx
 
         let [line, col, sub] = searchpos(rx, 'nbp')
         if line
@@ -341,11 +340,20 @@ function! smartHits#smartSpace()
             let cnt = 10
             let matched = getline(line)[col-1:col('.')-2]
             while match(rhs, '\$\%(\d\+\|&\)') >= 0
+                " There is a replace string in rhs, we will have to insert
+                " content from the matched string
                 if cnt < 0 | break | endif
                 let cnt -= 1
                 let num = matchstr(rhs, '\$\zs\%(\d\+\|&\)')
                 if num != '&' | let num = '\'.num | endif
+
+                " Taking the cursor indicator ('\%#') out of lhs
+                let lhs = substitute(lhs, '\\%#', '', '')
+
+                " We find the substring
                 let found = substitute(matched, lhs, num, '')
+
+                " We substitute the matched string in the rhs
                 let rhs = substitute(rhs, '\$\%(\d\+\|&\)', found, '')
             endwhile
             exe 's/'.rx.'//g'
