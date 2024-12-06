@@ -8,6 +8,12 @@ else
     let s:Left = "\<LEFT>"
 endif
 
+if exists('g:smartHits_should_close_html_tags')
+    let should_close_html_tags = g:smartHits_should_close_html_tags
+else
+    let should_close_html_tags = 1
+endif
+
 " Setting up the auto-closing of pairs
 function! smartHits#smartHits()
     for elem in g:smartHits_pairs
@@ -261,6 +267,34 @@ function! smartHits#autoCloseLong(start, end)
     return a:start[-1:]
 endfunction
 
+
+" Returns the closing tag for the current HTML tag
+function! s:closeHTMLTag()
+    let line = getline('.')
+    let col = col('.')
+    
+    " Search for the opening tag before cursor
+    let tag_match = matchstr(line, '<\zs[a-zA-Z\-_0-9]\+\ze\s*>\?$')
+    
+    if empty(tag_match)
+        return ''
+    endif
+    
+    " Check if we're already in a closing tag
+    if line[col-2] == '/'
+        return ''
+    endif
+    
+    " Check for self-closing tags
+    let self_closing_tags = ['img', 'br', 'hr', 'input', 'meta', 'link', 'area', 'base', 'col', 'command', 'embed', 'keygen', 'param', 'source', 'track', 'wbr']
+    if index(self_closing_tags, tag_match) >= 0
+        return ''
+    endif
+    
+    " Add the closing tag
+    return '</' . tag_match . '>' . repeat(s:Left, len(tag_match) + 3)
+endfunction
+
 " Called when the a rhs of a pair is typed
 "
 " @param lhs The start of the pair
@@ -268,6 +302,12 @@ endfunction
 " @param typed What was typed to trigger this function
 function! smartHits#onClosePair(lhs, rhs, typed)
     let nextchar =  getline('.')[col('.') - 1]
+
+    let suffix = ''
+
+    if &ft == 'html' && a:rhs == '>' && should_close_html_tags
+        let suffix = s:closeHTMLTag()
+    endif
 
     if nextchar == a:rhs
         " If the next char is the same as the closing char,
@@ -277,17 +317,17 @@ function! smartHits#onClosePair(lhs, rhs, typed)
         if stackAfter > 0 | let stackAfter = 0 | endif
 
         if stackAfter + stackBefore > 0
-            return a:typed
+            return a:typed . suffix
         else
             " Using <del>typed instead of just <right> because there might be
             " a mapping on the typed char, and we want to trigger it
-            return "\<DEL>" . a:typed
+            return "\<DEL>" . a:typed . suffix
         endif
     endif
 
     let found = s:cursorIsBetweenMatch()
-    if len(found) == 0 || found[1]!=a:rhs | return a:typed | endif
-    return s:Right
+    if len(found) == 0 || found[1]!=a:rhs | return a:typed . suffix | endif
+    return s:Right . suffix
 endfunction
 
 " Checks if the cursor is directly between a pair
