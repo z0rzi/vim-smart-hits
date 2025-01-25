@@ -8,10 +8,8 @@ else
     let s:Left = "\<LEFT>"
 endif
 
-if exists('g:smartHits_should_close_html_tags')
-    let should_close_html_tags = g:smartHits_should_close_html_tags
-else
-    let should_close_html_tags = 1
+if !exists('g:smartHits_should_close_html_tags')
+    let g:should_close_html_tags = 1
 endif
 
 " Setting up the auto-closing of pairs
@@ -197,12 +195,40 @@ function! smartHits#addAutoClose(start, end)
     endif
 endfunction
 
+function! s:isCommentChar(char)
+    " stripping '%s'
+    let comment_string = substitute(&commentstring, '%s', '', 'g')
+    " trimming whitespace
+    let comment_string = substitute(comment_string, '^\s*\(.\{-}\)\s*$', '\1', '')
+
+    if comment_string == a:char
+        return 1
+    endif
+    return 0
+endfunction
+
 " Called when the a pair with the same open and closing is triggered.
 "
 " We have to guess whether the pair is being open or closed
 "
 " @param char The char representing the pair
 function! smartHits#onSamePair(char)
+    " Checking if the cursor is before all chars
+    let line = getline('.')
+    let col = col('.')
+
+    let content_before_cursor = line[0:col-2]
+    let cursor_at_start_of_line = col == 1 || trim(content_before_cursor) == ''
+
+    if cursor_at_start_of_line
+        " If the typed character is the same as the comment string,
+        " odds are the user is trying to comment out the line
+
+        if s:isCommentChar(a:char)
+            return a:char
+        endif
+    endif
+
     if a:char == "'"
         if search('\w\%#', 'n')
             " It's an apostrophe right after a word, we're most likely writing
@@ -305,7 +331,7 @@ function! smartHits#onClosePair(lhs, rhs, typed)
 
     let suffix = ''
 
-    if &ft == 'html' && a:rhs == '>' && should_close_html_tags
+    if a:rhs == '>' && g:should_close_html_tags && (&ft == 'html' || &ft == 'javascriptreact' || &ft == 'typescriptreact')
         let suffix = s:closeHTMLTag()
     endif
 
@@ -396,14 +422,24 @@ function! smartHits#smartSpace()
                 " We substitute the matched string in the rhs
                 let rhs = substitute(rhs, '\$\%(\d\+\|&\)', found, '')
             endwhile
+            " We remove the text which triggered the substitution
             exe 's/'.rx.'//g'
             call cursor(0, col)
 
-            if len(matchstr(rhs, '!$'))
-                return rhs[:-2]
-            else
-                return rhs . "\<SPACE>"
+            " If there's a | in the rhs, we place the cursor after it
+            let pos = match(rhs, '#@')
+            echom pos
+            if pos > -1
+                return rhs . "\<ESC>:call search('#@', 'Wb')\<CR>\"_c2l"
             endif
+
+            " If the rhs ends with >>, it's a snippy snippet to expand
+            if match(rhs, '>>$') >= 0
+                let rhs = substitute(rhs, '>>$', '', '')
+                return rhs . " \<esc>:lua require('luasnip').expand()\<CR>"
+            endif
+
+            return rhs
         endif
     endfor
 
@@ -504,6 +540,23 @@ function! smartHits#sendToEol()
     norm!"ax
     let cara = @a
     let lineContent = getline('.')
+
+    for i in range(len(lineContent))
+        let char = lineContent[i]
+        if index(['(', '[', '{'], char) != -1
+            " We go to the closing brace
+            let curline = line('.')
+            norm!%
+            if line('.') != curline
+                " We changed lines, we stop
+                norm!"ap
+                return ''
+            endif
+
+            " We didn't change lines, we keep going till the end of the line.
+        endif
+    endfor
+
     let lastChar = lineContent[-1:]
 
     if lastChar == ';'
@@ -530,12 +583,8 @@ function! smartHits#skip()
     let next = getline('.')[col('.')-1]
     if index(['(', '[', '{'], next) != -1
         let line = line('.')
-        norm!%
-        if line('.') == line
-            norm!"ap
-            return ''
-        endif
-        norm!%
+        norm!%"ap
+        return ''
     endif
     if len(matchstr(next, '[a-zA-Z]'))
         norm!he"ap
