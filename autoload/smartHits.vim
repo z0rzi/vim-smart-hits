@@ -296,29 +296,92 @@ endfunction
 
 " Returns the closing tag for the current HTML tag
 function! s:closeHTMLTag()
-    let line = getline('.')
+    let line_content = getline('.')
     let col = col('.')
     
-    " Search for the opening tag before cursor
-    let tag_match = matchstr(line, '<\zs[a-zA-Z\-_0-9]\+\ze\s*>\?$')
-    
-    if empty(tag_match)
+    " If the cursor is right after a '/', it's a self-closing tag.
+    " We just insert a ">"
+    if line_content[col-2] == '/'
         return ''
     endif
-    
-    " Check if we're already in a closing tag
-    if line[col-2] == '/'
+
+    " If the cursor is right after an opening tag, we close the tag
+    let line_content = getline('.')
+    let content_before_cursor = line_content[0:col-2]
+    if match(content_before_cursor, '^\s*<[0-9a-zA-Z\-]\+\s*') >= 0
+        " Removing the leading '<' from the line
+        let tag_name = matchstr(content_before_cursor, '^\s*<\zs[0-9a-zA-Z\-]\+\ze\s*')
+        let is_self_closing = tag_name =~ '^\%(input\|hr\|img\|br\|meta\|link\|base\|area\|param\|col\|command\)$'
+
+        if is_self_closing
+            return "\<LEFT>/\<RIGHT>"
+        endif
+        return '</'.tag_name.'>' .. repeat("\<LEFT>", len(tag_name) + 3)
+    endif
+
+    let curpos = getcurpos()
+
+    if nextnonblank(line('.')) == line('.')
         return ''
     endif
-    
-    " Check for self-closing tags
-    let self_closing_tags = ['img', 'br', 'hr', 'input', 'meta', 'link', 'area', 'base', 'col', 'command', 'embed', 'keygen', 'param', 'source', 'track', 'wbr']
-    if index(self_closing_tags, tag_match) >= 0
+
+    " If we're on an empty line, we look for the previous occurence of an
+    " opening tag without the ">"
+    call search('<\zs\/\?\w\+[ \>\n]\|\/>', 'b')
+    let level = 0
+    let tag = ''
+    let opening_tag_line = 0
+    while 1
+        echom getline('.')
+        let char_under_cursor = getline('.')[col('.')-1]
+        if char_under_cursor == '/'
+            " Closing tag
+            let level += 1
+        else
+            " Opening tag
+            let level -= 1
+        endif
+        if level < 0
+            let opening_tag_line = line('.')
+            let tag = expand('<cword>')
+            break
+        endif
+        let line = search('<\zs\/\?\w\+[ \>\n]\|\/>', 'bW')
+        if line == 0
+            break
+        endif
+    endwhile
+    call setpos('.', curpos)
+
+    if tag == ''
         return ''
     endif
-    
-    " Add the closing tag
-    return '</' . tag_match . '>' . repeat(s:Left, len(tag_match) + 3)
+
+    " We make sure the opening tag needs a ">"
+    let level = 0
+    call search('<\|[^=]\zs>', 'bW')
+    while 1
+        let char_under_cursor = getline('.')[col('.')-1]
+        if char_under_cursor == '>'
+            let level += 1
+        else
+            let level -= 1
+        endif
+        let line = search('<\|[^=]\zs>', 'bW')
+        if line < opening_tag_line
+            break
+        endif
+    endwhile
+
+    call setpos('.', curpos)
+
+    let out = '</'.tag.'>'
+
+    if level >= 0
+        let out = "\<BS>" .. out
+    endif
+
+    return out
 endfunction
 
 " Called when the a rhs of a pair is typed
